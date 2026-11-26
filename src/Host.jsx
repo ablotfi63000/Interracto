@@ -132,7 +132,7 @@ export default function Host({ code }) {
     if (current?.id === a.id) setCurrent((c) => ({ ...c, ...patch }));
   }
 
-  async function createActivity() {
+    async function createActivity(project) {
     const labels = form.options.map((o) => o.trim()).filter(Boolean);
     if (!form.question.trim()) return setMsg("Question vide.");
     if (form.kind !== "cloud" && labels.length < 2) return setMsg("Au moins 2 options.");
@@ -144,8 +144,11 @@ export default function Host({ code }) {
         kind: form.kind,
         question: form.question.trim(),
         duration_sec: form.kind === "quiz" ? Number(form.duration) : null,
-        position: acts.length,
+                position: acts.length,
+        status: "closed",
       })
+    
+
       .select()
       .single();
     if (form.kind !== "cloud") {
@@ -157,10 +160,17 @@ export default function Host({ code }) {
         await supabase.from("activities").update({ correct_id: opts[form.correct].id }).eq("id", act.id);
       }
     }
-    setForm({ ...form, question: "", options: ["", ""] });
+        setForm({ ...form, question: "", options: ["", ""] });
     await loadSession();
-    await focusActivity(act);
+    if (project) {
+      await focusActivity(act);
+    } else {
+      setMsg("Question " + acts.length + " ajoutée à la séance.");
+    }
   }
+    
+    
+  
 
   async function exportCSV() {
     const ids = acts.map((a) => a.id);
@@ -350,7 +360,8 @@ export default function Host({ code }) {
             onChange={(e) => setForm({ ...form, duration: e.target.value })}
           />
         )}
-        <button className="btn primary full" onClick={createActivity}>Créer et projeter</button>
+                <button className="btn full" onClick={() => createActivity(false)}>Ajouter à la séance</button>
+        <button className="btn primary full" onClick={() => createActivity(true)}>Créer et projeter</button>
       </div>
     </div>
   );
