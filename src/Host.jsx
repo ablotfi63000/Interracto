@@ -189,6 +189,7 @@ export default function Host({ code }) {
             <p className="muted small">Rejoignez sur votre téléphone :</p>
             <p className="code">{code.slice(0, 3)} {code.slice(3)}</p>
             <p className="muted small">{joinUrl}</p>
+                        <Qr url={joinUrl} />
           </div>
           <div className="right">
             <button
