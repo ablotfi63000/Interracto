@@ -10,6 +10,7 @@ export default function Host({ code }) {
   const [reactions, setReactions] = useState({});
   const [revealed, setRevealed] = useState(true);
   const [now, setNow] = useState(Date.now());
+    const [online, setOnline] = useState(0);
   const [msg, setMsg] = useState("");
   const [form, setForm] = useState({
     kind: "poll",
@@ -63,6 +64,20 @@ export default function Host({ code }) {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [loadSession]);
+    useEffect(() => {
+    const ch = supabase.channel("presence-" + code, {
+      config: { presence: { key: "host" } },
+    });
+    ch.on("presence", { event: "sync" }, () => {
+      setOnline(Object.keys(ch.presenceState()).filter((k) => k !== "host").length);
+    });
+    ch.subscribe((status) => {
+      if (status === "SUBSCRIBED") ch.track({ role: "host" });
+    });
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [code]);
 
   useEffect(() => {
     if (!presId) return;
@@ -199,6 +214,7 @@ export default function Host({ code }) {
               Copier le lien
             </button>
             <p className="muted small mt">Votes : {totalVotes}</p>
+                        <p className="muted small">En ligne : {online}</p>
             <p className="muted small">
               {Object.entries(reactions).map(([e, n]) => e + n + " ")}
             </p>
