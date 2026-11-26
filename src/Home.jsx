@@ -37,6 +37,11 @@ export default function Home() {
     }
     window.location.hash = "#/host/" + newCode;
   };
+  const removeSession = async (c) => {
+    if (!window.confirm("Supprimer la session " + c + " et toutes ses données ?")) return;
+    await supabase.from("presentations").delete().eq("code", c);
+    setRecent((r) => r.filter((s) => s.code !== c));
+  };
 
   const goTo = (prefix, c) => {
     window.location.hash = "#/" + prefix + "/" + c;
@@ -89,10 +94,14 @@ export default function Home() {
                 <span className="recent-code">{s.code.slice(0, 3)} {s.code.slice(3)}</span>
                 {s.created_at && <p className="muted small">{fmtDate(s.created_at)}</p>}
               </div>
-              <div className="row">
+                            <div className="row">
                 <button className="btn slim" onClick={() => goTo("host", s.code)}>Présentateur</button>
                 <button className="btn slim" onClick={() => goTo("j", s.code)}>Rejoindre</button>
+                <button className="btn slim" onClick={() => removeSession(s.code)}>Supprimer</button>
               </div>
+                
+                
+              
             </div>
           ))}
         </div>
