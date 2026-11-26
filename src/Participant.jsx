@@ -11,6 +11,7 @@ export default function Participant({ code }) {
   const [joined, setJoined] = useState(false);
   const [answered, setAnswered] = useState(false);
   const [word, setWord] = useState("");
+  const [picked, setPicked] = useState([]);
   const [now, setNow] = useState(Date.now());
   const [error, setError] = useState("");
   const participantKey = useMemo(() => {
@@ -44,6 +45,7 @@ export default function Participant({ code }) {
       }
       setPres(p);
       setAnswered(false);
+      setPicked([]);
       setWord("");
       if (!p.current_activity_id) {
         setActivity(null);
@@ -80,7 +82,8 @@ export default function Participant({ code }) {
       supabase.removeChannel(channel);
     };
   }, [joined, code]);
-    useEffect(() => {
+
+  useEffect(() => {
     if (!joined) return;
     const ch = supabase.channel("presence-" + code, {
       config: { presence: { key: participantKey } },
@@ -92,7 +95,7 @@ export default function Participant({ code }) {
       supabase.removeChannel(ch);
     };
   }, [joined, code, participantKey]);
-        const remaining =
+    const remaining =
     activity?.kind === "quiz" && activity.opened_at && activity.status === "open"
       ? Math.max(0, Math.round((new Date(activity.opened_at).getTime() + activity.duration_sec * 1000 - now) / 1000))
       : null;
@@ -102,6 +105,24 @@ export default function Participant({ code }) {
     if (answered || locked) return;
     const { error: err } = await supabase.from("responses").upsert(
       { activity_id: activity.id, option_id: option.id, participant_key: participantKey },
+      { onConflict: "activity_id,participant_key" }
+    );
+    if (err) {
+      setError("Envoi impossible : " + err.message);
+      return;
+    }
+    setAnswered(true);
+  };
+
+  const togglePick = (o) => {
+    if (answered || locked) return;
+    setPicked((p) => (p.includes(o.id) ? p.filter((x) => x !== o.id) : [...p, o.id]));
+  };
+
+  const sendMulti = async () => {
+    if (!picked.length || answered || locked) return;
+    const { error: err } = await supabase.from("responses").upsert(
+      { activity_id: activity.id, option_ids: picked, participant_key: participantKey },
       { onConflict: "activity_id,participant_key" }
     );
     if (err) {
@@ -169,7 +190,7 @@ export default function Participant({ code }) {
 
       {activity && (
         <>
-          <h2>{activity.question}</h2>
+          <h2>{activity.question}{activity.multi ? " (plusieurs réponses)" : ""}</h2>
           {activity.status === "closed" ? (
             <p className="muted big">Réponses verrouillées</p>
           ) : activity.kind === "cloud" ? (
@@ -194,6 +215,26 @@ export default function Participant({ code }) {
               )}
               {answered ? (
                 <p className="ok-msg">Réponse envoyée !</p>
+              ) : activity.multi ? (
+                <>
+                  {options.map((o, i) => (
+                    <button
+                      key={o.id}
+                      className={"option" + (picked.includes(o.id) ? " picked" : "")}
+                      disabled={locked}
+                      onClick={() => togglePick(o)}
+                    >
+                      {String.fromCharCode(65 + i)}. {o.label}
+                    </button>
+                  ))}
+                  <button
+                    className="btn primary full"
+                    disabled={!picked.length || locked}
+                    onClick={sendMulti}
+                  >
+                    Valider ({picked.length})
+                  </button>
+                </>
               ) : (
                 options.map((o, i) => (
                   <button
