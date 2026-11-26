@@ -10,13 +10,15 @@ export default function Host({ code }) {
   const [reactions, setReactions] = useState({});
   const [revealed, setRevealed] = useState(true);
   const [now, setNow] = useState(Date.now());
-    const [online, setOnline] = useState(0);
+  const [online, setOnline] = useState(0);
   const [msg, setMsg] = useState("");
   const [form, setForm] = useState({
     kind: "poll",
     question: "",
     options: ["", ""],
     correct: 0,
+    multi: false,
+    corrects: [],
     duration: 30,
   });
 
@@ -32,8 +34,14 @@ export default function Host({ code }) {
     const { data: resps } = await supabase.from("responses").select("*").eq("activity_id", activityId);
     const c = {};
     (resps ?? []).forEach((r) => {
-      const key = r.option_id ?? r.word;
-      c[key] = (c[key] ?? 0) + 1;
+      if (r.option_ids?.length) {
+        r.option_ids.forEach((oid) => {
+          c[oid] = (c[oid] ?? 0) + 1;
+        });
+      } else {
+        const key = r.option_id ?? r.word;
+        c[key] = (c[key] ?? 0) + 1;
+      }
     });
     setCounts(c);
     setCurrent({ ...act, options: opts ?? [] });
@@ -64,7 +72,8 @@ export default function Host({ code }) {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [loadSession]);
-    useEffect(() => {
+
+  useEffect(() => {
     const ch = supabase.channel("presence-" + code, {
       config: { presence: { key: "host" } },
     });
@@ -89,8 +98,18 @@ export default function Host({ code }) {
         (p) => {
           const r = p.new;
           if (current && r.activity_id === current.id) {
-            const key = r.option_id ?? r.word;
-            setCounts((c) => ({ ...c, [key]: (c[key] ?? 0) + 1 }));
+            if (r.option_ids?.length) {
+              setCounts((c0) => {
+                const c = { ...c0 };
+                r.option_ids.forEach((oid) => {
+                  c[oid] = (c[oid] ?? 0) + 1;
+                });
+                return c;
+              });
+            } else {
+              const key = r.option_id ?? r.word;
+              setCounts((c) => ({ ...c, [key]: (c[key] ?? 0) + 1 }));
+            }
           }
         }
       )
@@ -131,36 +150,45 @@ export default function Host({ code }) {
     setActs((prev) => prev.map((x) => (x.id === a.id ? { ...x, ...patch } : x)));
     if (current?.id === a.id) setCurrent((c) => ({ ...c, ...patch }));
   }
-
     async function createActivity(project) {
     const labels = form.options.map((o) => o.trim()).filter(Boolean);
     if (!form.question.trim()) return setMsg("Question vide.");
     if (form.kind !== "cloud" && labels.length < 2) return setMsg("Au moins 2 options.");
+    if (form.kind === "quiz" && form.multi && !form.corrects.length) {
+      return setMsg("Cochez au moins une bonne réponse (boutons OK).");
+    }
     setMsg("");
+    const isMulti = form.kind === "quiz" && form.multi;
     const { data: act } = await supabase
       .from("activities")
       .insert({
         presentation_id: presId,
         kind: form.kind,
         question: form.question.trim(),
+        multi: isMulti,
         duration_sec: form.kind === "quiz" ? Number(form.duration) : null,
-                position: acts.length,
+        position: acts.length,
         status: "closed",
       })
-    
-
       .select()
       .single();
     if (form.kind !== "cloud") {
       const { data: opts } = await supabase
         .from("options")
-        .insert(labels.map((label, i) => ({ activity_id: act.id, label, position: i })))
+        .insert(
+          labels.map((label, i) => ({
+            activity_id: act.id,
+            label,
+            position: i,
+            is_correct: isMulti && form.corrects.includes(i),
+          }))
+        )
         .select();
-      if (form.kind === "quiz" && opts?.[form.correct]) {
+      if (form.kind === "quiz" && !isMulti && opts?.[form.correct]) {
         await supabase.from("activities").update({ correct_id: opts[form.correct].id }).eq("id", act.id);
       }
     }
-        setForm({ ...form, question: "", options: ["", ""] });
+    setForm({ ...form, question: "", options: ["", ""], corrects: [] });
     await loadSession();
     if (project) {
       await focusActivity(act);
@@ -168,9 +196,6 @@ export default function Host({ code }) {
       setMsg("Question " + acts.length + " ajoutée à la séance.");
     }
   }
-    
-    
-  
 
   async function exportCSV() {
     const ids = acts.map((a) => a.id);
@@ -181,7 +206,11 @@ export default function Host({ code }) {
     const actById = new Map(acts.map((a) => [a.id, a]));
     const map = new Map();
     (resps ?? []).forEach((r) => {
-      const label = r.option_id ? optById.get(r.option_id) ?? "?" : r.word;
+      const label = r.option_ids?.length
+        ? r.option_ids.map((oid) => optById.get(oid) ?? "?").join(" + ")
+        : r.option_id
+        ? optById.get(r.option_id) ?? "?"
+        : r.word;
       const key = (actById.get(r.activity_id)?.question ?? "?") + "||" + label;
       map.set(key, (map.get(key) ?? 0) + 1);
     });
@@ -214,17 +243,14 @@ export default function Host({ code }) {
             <p className="muted small">Rejoignez sur votre téléphone :</p>
             <p className="code">{code.slice(0, 3)} {code.slice(3)}</p>
             <p className="muted small">{joinUrl}</p>
-                        <Qr url={joinUrl} />
+            <Qr url={joinUrl} />
           </div>
           <div className="right">
-            <button
-              className="btn"
-              onClick={() => navigator.clipboard?.writeText(joinUrl)}
-            >
+            <button className="btn" onClick={() => navigator.clipboard?.writeText(joinUrl)}>
               Copier le lien
             </button>
             <p className="muted small mt">Votes : {totalVotes}</p>
-                        <p className="muted small">En ligne : {online}</p>
+            <p className="muted small">En ligne : {online}</p>
             <p className="muted small">
               {Object.entries(reactions).map(([e, n]) => e + n + " ")}
             </p>
@@ -238,9 +264,9 @@ export default function Host({ code }) {
         {current ? (
           <>
             <div className="row spread wrap">
-              <h2>{current.question}</h2>
+              <h2>{current.question}{current.multi ? " (plusieurs réponses)" : ""}</h2>
               <span className={"badge" + (current.status === "open" ? " ok" : "")}>
-                {current.status === "open" ? "Ouvert" : "Verrouille"}
+                {current.status === "open" ? "Ouvert" : "Verrouillé"}
                 {remaining !== null && current.status === "open" ? " - " + remaining + "s" : ""}
               </span>
             </div>
@@ -258,7 +284,9 @@ export default function Host({ code }) {
                   {current.options.map((o) => {
                     const n = counts[o.id] ?? 0;
                     const pct = totalVotes ? Math.round((n / totalVotes) * 100) : 0;
-                    const good = current.kind === "quiz" && current.correct_id === o.id;
+                    const good =
+                      current.kind === "quiz" &&
+                      (current.multi ? o.is_correct : current.correct_id === o.id);
                     return (
                       <div key={o.id} className="bar-row">
                         <span className="bar-label">{o.label}</span>
@@ -312,12 +340,20 @@ export default function Host({ code }) {
             <button
               key={k}
               className={"btn" + (form.kind === k ? " primary" : "")}
-              onClick={() => setForm({ ...form, kind: k })}
+              onClick={() => setForm({ ...form, kind: k, multi: false, corrects: [] })}
             >
               {k === "poll" ? "Sondage" : k === "quiz" ? "Quiz" : "Nuage"}
             </button>
           ))}
         </div>
+        {form.kind === "quiz" && (
+          <button
+            className={"btn slim" + (form.multi ? " good" : "")}
+            onClick={() => setForm({ ...form, multi: !form.multi, corrects: [] })}
+          >
+            {form.multi ? "Réponses multiples : ON" : "Réponses multiples : OFF"}
+          </button>
+        )}
         <input
           className="input"
           placeholder="Votre question..."
@@ -329,8 +365,22 @@ export default function Host({ code }) {
             <div key={i} className="row gap">
               {form.kind === "quiz" && (
                 <button
-                  className={"btn slim" + (form.correct === i ? " good" : "")}
-                  onClick={() => setForm({ ...form, correct: i })}
+                  className={
+                    "btn slim" +
+                    ((form.multi ? form.corrects.includes(i) : form.correct === i) ? " good" : "")
+                  }
+                  onClick={() => {
+                    if (form.multi) {
+                      setForm({
+                        ...form,
+                        corrects: form.corrects.includes(i)
+                          ? form.corrects.filter((x) => x !== i)
+                          : [...form.corrects, i],
+                      });
+                    } else {
+                      setForm({ ...form, correct: i });
+                    }
+                  }}
                 >
                   OK
                 </button>
@@ -360,7 +410,7 @@ export default function Host({ code }) {
             onChange={(e) => setForm({ ...form, duration: e.target.value })}
           />
         )}
-                <button className="btn full" onClick={() => createActivity(false)}>Ajouter à la séance</button>
+        <button className="btn full" onClick={() => createActivity(false)}>Ajouter à la séance</button>
         <button className="btn primary full" onClick={() => createActivity(true)}>Créer et projeter</button>
       </div>
     </div>
