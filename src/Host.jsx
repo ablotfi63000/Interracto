@@ -1,3 +1,4 @@
+import Qr from "./Qr.jsx";
 import { useCallback, useEffect, useState } from "react";
 import { supabase, baseUrl } from "./lib/supabase.js";
 
