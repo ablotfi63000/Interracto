@@ -80,6 +80,18 @@ export default function Participant({ code }) {
       supabase.removeChannel(channel);
     };
   }, [joined, code]);
+    useEffect(() => {
+    if (!joined) return;
+    const ch = supabase.channel("presence-" + code, {
+      config: { presence: { key: participantKey } },
+    });
+    ch.subscribe((status) => {
+      if (status === "SUBSCRIBED") ch.track({ role: "participant" });
+    });
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [joined, code, participantKey]);
         const remaining =
     activity?.kind === "quiz" && activity.opened_at && activity.status === "open"
       ? Math.max(0, Math.round((new Date(activity.opened_at).getTime() + activity.duration_sec * 1000 - now) / 1000))
