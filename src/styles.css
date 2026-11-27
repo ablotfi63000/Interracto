@@ -76,3 +76,5 @@ h1, h2, h3 { margin: 0; }
 @keyframes pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
 .waiting { animation: pulse 2s ease-in-out infinite; }
 .cloud.mini { margin-top: 1rem; }
+
+.card.screen.fs { position: fixed; inset: 0; z-index: 999; border-radius: 0; overflow: auto; }

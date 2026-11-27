@@ -438,7 +438,7 @@ export default function Host({ code }) {
 
       {msg && <p className="error">{msg}</p>}
 
-      <div className="card screen"><div className="credit">Conçu par Dr A. BELHAKEM</div>
+      <div className="card screen" onDoubleClick={(e) => e.currentTarget.classList.toggle("fs")}><div className="credit">Conçu par Dr A. BELHAKEM</div>
         {current ? (
           <>
             <div className="row spread wrap">
