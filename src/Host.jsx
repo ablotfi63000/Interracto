@@ -326,9 +326,16 @@ export default function Host({ code }) {
             <Qr url={joinUrl} />
           </div>
           <div className="right">
-            <button className="btn" onClick={() => navigator.clipboard?.writeText(joinUrl)}>
-              Copier le lien
-            </button>
+                        <div className="row gap">
+              <button className="btn" onClick={() => navigator.clipboard?.writeText(joinUrl)}>
+                Copier le lien
+              </button>
+              <button className="btn" onClick={() => { window.location.hash = "#/"; }}>
+                Terminer la séance
+              </button>
+            </div>
+              
+            
             <p className="muted small mt">Votes : {totalVotes}</p>
             <p className="muted small">En ligne : {online}</p>
             <p className="muted small">
