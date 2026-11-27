@@ -11,11 +11,12 @@ export default function Host({ code }) {
   const [current, setCurrent] = useState(null);
   const [counts, setCounts] = useState({});
   const [reactions, setReactions] = useState({});
-  const [revealed, setRevealed] = useState(true);
+  const [revealed, setRevealed] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [online, setOnline] = useState(0);
   const [msg, setMsg] = useState("");
   const [board, setBoard] = useState(null);
+  const [rankData, setRankData] = useState(null);
   const [form, setForm] = useState({
     kind: "poll",
     question: "",
@@ -33,6 +34,8 @@ export default function Host({ code }) {
       setCurrent(null);
       return;
     }
+    setRevealed(false);
+    supabase.from("activities").update({ revealed: false }).eq("id", activityId);
     const { data: act } = await supabase.from("activities").select("*").eq("id", activityId).single();
     const { data: opts } = await supabase.from("options").select("*").eq("activity_id", activityId).order("position");
     const { data: resps } = await supabase.from("responses").select("*").eq("activity_id", activityId);
@@ -78,6 +81,38 @@ export default function Host({ code }) {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [loadSession]);
+
+  useEffect(() => {
+    if (!revealed || current?.kind !== "rank") {
+      setRankData(null);
+      return;
+    }
+    let alive = true;
+    const compute = async () => {
+      const { data: resps } = await supabase.from("responses").select("option_ids").eq("activity_id", current.id);
+      if (!alive) return;
+      const sums = {};
+      const nums = {};
+      (resps ?? []).forEach((r) => {
+        (r.option_ids ?? []).forEach((oid, i) => {
+          sums[oid] = (sums[oid] ?? 0) + i + 1;
+          nums[oid] = (nums[oid] ?? 0) + 1;
+        });
+      });
+      setRankData(
+        (current.options ?? [])
+          .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+          .map((o, oi) => ({ label: o.label, ideal: oi, avg: nums[o.id] ? sums[o.id] / nums[o.id] : null }))
+          .sort((a, b) => (a.avg ?? 99) - (b.avg ?? 99))
+      );
+    };
+    compute();
+    const t = setInterval(compute, 3000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [revealed, current?.id, current?.kind]);
 
   useEffect(() => {
     const ch = supabase.channel("presence-" + code, {
@@ -365,6 +400,8 @@ export default function Host({ code }) {
   const totalVotes =
     current?.kind === "cloud"
       ? Object.values(counts).reduce((s, n) => s + n, 0)
+      : current?.kind === "rank"
+      ? counts[current.options?.[0]?.id] ?? 0
       : current
       ? current.options.reduce((s, o) => s + (counts[o.id] ?? 0), 0)
       : 0;
@@ -434,6 +471,15 @@ export default function Host({ code }) {
                   ))}
                   {totalVotes === 0 && <p className="muted">En attente des réponses...</p>}
                 </div>
+              ) : current.kind === "rank" ? (
+                <div className="bars">
+                  {(rankData ?? []).map((r, i) => (
+                    <div key={i} className="bar-row">
+                      <span className="bar-label">{i + 1}. {r.label}{r.avg ? " (moy. " + r.avg.toFixed(1) + ")" : ""}{i === r.ideal ? " [ordre correct]" : ""}</span>
+                    </div>
+                  ))}
+                  {!rankData?.length && <p className="muted">En attente des réponses...</p>}
+                </div>
               ) : (
                 <div className="bars">
                   {current.options.map((o) => {
@@ -471,7 +517,7 @@ export default function Host({ code }) {
               className={"btn" + (current?.id === a.id ? " primary" : "")}
               onClick={() => focusActivity(a)}
             >
-              {i + 1}. {a.kind === "poll" ? "Sondage" : a.kind === "quiz" ? "Quiz" : "Nuage"} - {a.question.slice(0, 25)}
+              {i + 1}. {a.kind === "poll" ? "Sondage" : a.kind === "quiz" ? "Quiz" : a.kind === "cloud" ? "Nuage" : "Classement"} - {a.question.slice(0, 25)}
             </button>
             <button className="btn slim" onClick={() => reuse(a)}>
               Réutiliser
@@ -485,7 +531,15 @@ export default function Host({ code }) {
           <button className="btn primary" onClick={() => toggleOpen(current)}>
             {current.status === "open" ? "Verrouiller" : "Ouvrir"}
           </button>
-          <button className="btn" onClick={() => setRevealed((v) => !v)}>
+          <button
+            className="btn"
+            onClick={async () => {
+              const v = !revealed;
+              setRevealed(v);
+              const { data: upd, error: rerr } = await supabase.from("activities").update({ revealed: v }).eq("id", current.id).select();
+              setMsg(rerr ? "Erreur Afficher : " + rerr.message : upd && upd.length ? "Revele OK" : "Aucune ligne mise a jour");
+            }}
+          >
             {revealed ? "Masquer" : "Afficher"}
           </button>
           <button className="btn" onClick={showBoard}>Classement</button>
@@ -526,13 +580,13 @@ export default function Host({ code }) {
       <div className="card">
         <h3>Nouvelle activité</h3>
         <div className="row gap">
-          {["poll", "quiz", "cloud"].map((k) => (
+          {["poll", "quiz", "cloud", "rank"].map((k) => (
             <button
               key={k}
               className={"btn" + (form.kind === k ? " primary" : "")}
               onClick={() => setForm({ ...form, kind: k, multi: false, corrects: [], vf: false })}
             >
-              {k === "poll" ? "Sondage" : k === "quiz" ? "Quiz" : "Nuage"}
+              {k === "poll" ? "Sondage" : k === "quiz" ? "Quiz" : k === "cloud" ? "Nuage" : "Classement"}
             </button>
           ))}
         </div>
@@ -542,6 +596,9 @@ export default function Host({ code }) {
         >
           Vrai/Faux éclair
         </button>
+        {form.kind === "rank" && (
+          <p className="muted">Saisissez les elements dans l ordre correct : le 1er saisi = priorite 1.</p>
+        )}
         {form.kind === "quiz" && (
           <button
             className={"btn slim" + (form.multi ? " good" : "")}

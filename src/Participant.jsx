@@ -14,6 +14,7 @@ export default function Participant({ code }) {
   const actIdRef = useRef(null);
   const [word, setWord] = useState("");
   const [picked, setPicked] = useState([]);
+  const [shuffled, setShuffled] = useState([]);
   const [now, setNow] = useState(Date.now());
   const [error, setError] = useState("");
   const participantKey = useMemo(() => {
@@ -46,10 +47,12 @@ export default function Participant({ code }) {
         return;
       }
       setPres(p);
-      setAnswered(false);
-      setWords([]);
-      setPicked([]);
-      setWord("");
+      if (actIdRef.current !== (p.current_activity_id ?? null)) {
+        setAnswered(localStorage.getItem("interacto_rep_" + (p.current_activity_id ?? "")) === "1");
+        setWords([]);
+        setPicked([]);
+        setWord("");
+      }
       actIdRef.current = p.current_activity_id ?? null;
       if (!p.current_activity_id) {
         setActivity(null);
@@ -78,6 +81,7 @@ export default function Participant({ code }) {
     }
 
     load();
+    const t2 = setInterval(load, 2000);
     const channel = supabase
       .channel("participant-" + code)
       .on(
@@ -101,6 +105,7 @@ export default function Participant({ code }) {
       });
     return () => {
       alive = false;
+      clearInterval(t2);
       supabase.removeChannel(channel);
     };
   }, [joined, code]);
@@ -133,7 +138,7 @@ export default function Participant({ code }) {
       setError("Envoi impossible : " + err.message);
       return;
     }
-    setAnswered(true);
+    setAnswered(true); localStorage.setItem("interacto_rep_" + activity.id, "1");
   };
 
   const togglePick = (o) => {
@@ -141,7 +146,17 @@ export default function Participant({ code }) {
     setPicked((p) => (p.includes(o.id) ? p.filter((x) => x !== o.id) : [...p, o.id]));
   };
 
-  const sendMulti = async () => {
+  useEffect(() => {
+    setShuffled([]);
+  }, [activity?.id]);
+
+  useEffect(() => {
+    if (activity?.kind === "rank" && options.length && !shuffled.length) {
+      setShuffled([...options].sort(() => Math.random() - 0.5));
+    }
+  }, [activity?.kind, options, shuffled.length]);
+
+  const [corrOn, setCorrOn] = useState(false); useEffect(() => { if (!answered || activity?.kind !== "rank") return; const check = async () => { const { data: a } = await supabase.from("activities").select("revealed").eq("id", activity.id).single(); setCorrOn(!!a?.revealed); }; check(); const t = setInterval(check, 2000); return () => clearInterval(t); }, [answered, activity?.id, activity?.kind]); const sendMulti = async () => {
     if (!picked.length || answered || locked) return;
     const { error: err } = await supabase.from("responses").upsert(
             { activity_id: activity.id, option_ids: picked, participant_key: participantKey, nickname: nickname || null },
@@ -151,7 +166,7 @@ export default function Participant({ code }) {
       setError("Envoi impossible : " + err.message);
       return;
     }
-    setAnswered(true);
+    setAnswered(true); localStorage.setItem("interacto_rep_" + activity.id, "1");
   };
 
   const sendWord = async () => {
@@ -165,7 +180,7 @@ export default function Participant({ code }) {
       setError("Envoi impossible : " + err.message);
       return;
     }
-    setAnswered(true);
+    setAnswered(true); localStorage.setItem("interacto_rep_" + activity.id, "1");
     setWord("");
   };
 
@@ -252,7 +267,27 @@ export default function Participant({ code }) {
                 <p className={"timer" + (remaining <= 5 ? " hot" : "")}>{remaining}s</p>
               )}
               {answered ? (
-                <p className="ok-msg">Réponse envoyée !</p>
+                <div><p className="ok-msg">Réponse envoyée !</p>{activity.kind === "rank" && corrOn && <p className="muted">Ordre correct : {[...options].sort((a, b) => a.position - b.position).map((o, i) => (i + 1) + ". " + o.label).join(" | ")}</p>}</div>
+              ) : activity.kind === "rank" ? (
+                <>
+                  {(shuffled.length ? shuffled : options).map((o) => (
+                    <button
+                      key={o.id}
+                      className={"option" + (picked.includes(o.id) ? " picked" : "")}
+                      disabled={locked}
+                      onClick={() => togglePick(o)}
+                    >
+                      {picked.includes(o.id) ? picked.indexOf(o.id) + 1 + ". " : ""}{o.label}
+                    </button>
+                  ))}
+                  <button
+                    className="btn primary full"
+                    disabled={picked.length !== options.length || locked}
+                    onClick={sendMulti}
+                  >
+                    Valider ({picked.length}/{options.length})
+                  </button>
+                </>
               ) : activity.multi ? (
                 <>
                   {options.map((o, i) => (
