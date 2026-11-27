@@ -158,3 +158,362 @@ export default function Host({ code }) {
     setActs((prev) => prev.map((x) => (x.id === a.id ? { ...x, ...patch } : x)));
     if (current?.id === a.id) setCurrent((c) => ({ ...c, ...patch }));
   }
+    async function createActivity(project) {
+    const labels = form.options.map((o) => o.trim()).filter(Boolean);
+    if (!form.question.trim()) return setMsg("Question vide.");
+    if (form.kind !== "cloud" && labels.length < 2) return setMsg("Au moins 2 options.");
+    if (form.kind === "quiz" && form.multi && !form.corrects.length) {
+      return setMsg("Cochez au moins une bonne réponse (boutons OK).");
+    }
+    setMsg("");
+    const isMulti = form.kind === "quiz" && form.multi;
+    const { data: act } = await supabase
+      .from("activities")
+      .insert({
+        presentation_id: presId,
+        kind: form.kind,
+        question: form.question.trim(),
+        multi: isMulti,
+        duration_sec: form.kind === "quiz" ? Number(form.duration) : null,
+        position: acts.length,
+        status: "closed",
+      })
+      .select()
+      .single();
+    if (form.kind !== "cloud") {
+      const { data: opts } = await supabase
+        .from("options")
+        .insert(
+          labels.map((label, i) => ({
+            activity_id: act.id,
+            label,
+            position: i,
+            is_correct: isMulti && form.corrects.includes(i),
+          }))
+        )
+        .select();
+      if (form.kind === "quiz" && !isMulti && opts?.[form.correct]) {
+        await supabase.from("activities").update({ correct_id: opts[form.correct].id }).eq("id", act.id);
+      }
+    }
+    setForm({ ...form, question: "", options: ["", ""], corrects: [] });
+    await loadSession();
+    if (project) {
+      await focusActivity(act);
+    } else {
+      setMsg("Question " + acts.length + " ajoutée à la séance.");
+    }
+  }
+
+  async function exportCSV() {
+    const ids = acts.map((a) => a.id);
+    if (!ids.length) return;
+    const { data: allOpts } = await supabase.from("options").select("*").in("activity_id", ids);
+    const { data: resps } = await supabase.from("responses").select("*").in("activity_id", ids);
+    const optById = new Map((allOpts ?? []).map((o) => [o.id, o.label]));
+    const actById = new Map(acts.map((a) => [a.id, a]));
+    const map = new Map();
+    (resps ?? []).forEach((r) => {
+      const label = r.option_ids?.length
+        ? r.option_ids.map((oid) => optById.get(oid) ?? "?").join(" + ")
+        : r.option_id
+        ? optById.get(r.option_id) ?? "?"
+        : r.word;
+      const key = (actById.get(r.activity_id)?.question ?? "?") + "||" + label;
+      map.set(key, (map.get(key) ?? 0) + 1);
+    });
+    const rows = [["Question", "Réponse", "Occurrences"], ...[...map].map(([k, n]) => [...k.split("||"), n])];
+    const csv = rows.map((r) => r.map((c) => '"' + String(c).split('"').join('""') + '"').join(";")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "interacto-" + code + ".csv";
+    a.click();
+  }
+
+  async function exportPDF() {
+    const ids = acts.map((a) => a.id);
+    if (!ids.length) return setMsg("Aucune activité à exporter.");
+    const { data: allOpts } = await supabase.from("options").select("*").in("activity_id", ids);
+    const { data: resps } = await supabase.from("responses").select("*").in("activity_id", ids);
+    const lines = [];
+    acts.forEach((a) => {
+      lines.push("<h2>" + a.question + "</h2>");
+      const rs = (resps ?? []).filter((r) => r.activity_id === a.id);
+      if (a.kind === "cloud") {
+        const c = {};
+        rs.forEach((r) => {
+          const k = norm(r.word);
+          c[k] = (c[k] ?? 0) + 1;
+        });
+        const items = Object.entries(c).sort((x, y) => y[1] - x[1]);
+        lines.push("<p>" + items.map(([w, n]) => w + " (" + n + ")").join(" - ") + "</p>");
+      } else {
+        const opts = (allOpts ?? []).filter((o) => o.activity_id === a.id).sort((x, y) => x.position - y.position);
+        const c = {};
+        rs.forEach((r) => {
+          if (r.option_ids?.length) r.option_ids.forEach((oid) => { c[oid] = (c[oid] ?? 0) + 1; });
+          else if (r.option_id) c[r.option_id] = (c[r.option_id] ?? 0) + 1;
+        });
+        opts.forEach((o) => {
+          const n = c[o.id] ?? 0;
+          const pct = rs.length ? Math.round((n / rs.length) * 100) : 0;
+          lines.push("<p>" + o.label + " : " + n + " (" + pct + "%)</p>");
+        });
+      }
+    });
+    const w = window.open("", "_blank");
+    if (!w) {
+      setMsg("Autorisez les fenêtres surgissantes pour l'export PDF.");
+      return;
+    }
+    w.document.write(
+      "<html><head><title>Rapport Interacto " + code + "</title>" +
+      "<style>body{font-family:-apple-system,Arial,sans-serif;max-width:700px;margin:24px auto;padding:0 16px;color:#0f172a}h1{font-size:22px}h2{font-size:17px;margin-top:20px}p{margin:4px 0}</style>" +
+      "</head><body><h1>Rapport de session " + code.slice(0, 3) + " " + code.slice(3) + "</h1>" +
+      lines.join("") + "</body></html>"
+    );
+    w.document.close();
+  }
+
+  async function showBoard() {
+    const quizzes = acts.filter((a) => a.kind === "quiz");
+    if (!quizzes.length) return setMsg("Aucun quiz dans la séance.");
+    const ids = quizzes.map((a) => a.id);
+    const { data: allOpts } = await supabase.from("options").select("*").in("activity_id", ids);
+    const { data: resps } = await supabase.from("responses").select("*").in("activity_id", ids);
+    const actById = new Map(quizzes.map((a) => [a.id, a]));
+    const scores = new Map();
+    (resps ?? []).forEach((r) => {
+      const a = actById.get(r.activity_id);
+      if (!a) return;
+      let ok = false;
+      if (a.multi) {
+        const correctSet = new Set(
+          (allOpts ?? []).filter((o) => o.activity_id === a.id && o.is_correct).map((o) => o.id)
+        );
+        ok = r.option_ids?.length === correctSet.size && r.option_ids.every((x) => correctSet.has(x));
+      } else {
+        ok = r.option_id === a.correct_id;
+      }
+      if (!ok) return;
+      const name = (r.nickname || r.participant_key).slice(0, 20);
+      scores.set(name, (scores.get(name) ?? 0) + 1);
+    });
+    setBoard([...scores.entries()].sort((x, y) => y[1] - x[1]).slice(0, 10));
+  }
+
+  const remaining =
+    current?.kind === "quiz" && current.opened_at
+      ? Math.max(0, Math.round((new Date(current.opened_at).getTime() + current.duration_sec * 1000 - now) / 1000))
+      : null;
+
+  const totalVotes =
+    current?.kind === "cloud"
+      ? Object.values(counts).reduce((s, n) => s + n, 0)
+      : current
+      ? current.options.reduce((s, o) => s + (counts[o.id] ?? 0), 0)
+      : 0;
+
+  return (
+    <div className="wrap">
+      <div className="card">
+        <div className="row spread wrap">
+          <div>
+            <p className="muted small">Rejoignez sur votre téléphone :</p>
+            <p className="code">{code.slice(0, 3)} {code.slice(3)}</p>
+            <p className="muted small">{joinUrl}</p>
+            <Qr url={joinUrl} />
+          </div>
+          <div className="right">
+            <button className="btn" onClick={() => navigator.clipboard?.writeText(joinUrl)}>
+              Copier le lien
+            </button>
+            <p className="muted small mt">Votes : {totalVotes}</p>
+            <p className="muted small">En ligne : {online}</p>
+            <p className="muted small">
+              {Object.entries(reactions).map(([e, n]) => e + n + " ")}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {msg && <p className="error">{msg}</p>}
+
+      <div className="card screen">
+        {current ? (
+          <>
+            <div className="row spread wrap">
+              <h2>{current.question}{current.multi ? " (plusieurs réponses)" : ""}</h2>
+              <span className={"badge" + (current.status === "open" ? " ok" : "")}>
+                {current.status === "open" ? "Ouvert" : "Verrouillé"}
+              </span>
+            </div>
+
+            {remaining !== null && current.status === "open" && (
+              <p className={"timer" + (remaining <= 5 ? " hot" : "")}>{remaining}s</p>
+            )}
+
+            {revealed ? (
+              current.kind === "cloud" ? (
+                <div className="cloud">
+                  {Object.entries(counts).map(([w, n]) => (
+                    <span key={w} style={{ fontSize: (0.9 + n * 0.35) + "rem" }}>{w} </span>
+                  ))}
+                  {totalVotes === 0 && <p className="muted">En attente des réponses...</p>}
+                </div>
+              ) : (
+                <div className="bars">
+                  {current.options.map((o) => {
+                    const n = counts[o.id] ?? 0;
+                    const pct = totalVotes ? Math.round((n / totalVotes) * 100) : 0;
+                    const good =
+                      current.kind === "quiz" &&
+                      (current.multi ? o.is_correct : current.correct_id === o.id);
+                    return (
+                      <div key={o.id} className="bar-row">
+                        <span className="bar-label">{o.label}</span>
+                        <div className="bar-track">
+                          <div className={"bar-fill" + (good ? " good" : "")} style={{ width: pct + "%" }} />
+                        </div>
+                        <span className="bar-n">{n} ({pct}%)</span>
+                      </div>
+                    );
+                  })}
+                  {totalVotes === 0 && <p className="muted">En attente des réponses...</p>}
+                </div>
+              )
+            ) : (
+              <p className="muted big">Résultats masqués</p>
+            )}
+          </>
+        ) : (
+          <p className="muted big">Créez ou sélectionnez une activité ci-dessous.</p>
+        )}
+      </div>
+
+      <div className="row gap wrap">
+        {acts.map((a, i) => (
+          <button
+            key={a.id}
+            className={"btn" + (current?.id === a.id ? " primary" : "")}
+            onClick={() => focusActivity(a)}
+          >
+            {i + 1}. {a.kind === "poll" ? "Sondage" : a.kind === "quiz" ? "Quiz" : "Nuage"} - {a.question.slice(0, 25)}
+          </button>
+        ))}
+      </div>
+
+      {current && (
+        <div className="row gap wrap">
+          <button className="btn primary" onClick={() => toggleOpen(current)}>
+            {current.status === "open" ? "Verrouiller" : "Ouvrir"}
+          </button>
+          <button className="btn" onClick={() => setRevealed((v) => !v)}>
+            {revealed ? "Masquer" : "Afficher"}
+          </button>
+          <button className="btn" onClick={showBoard}>Classement</button>
+          <button className="btn" onClick={exportCSV}>Export CSV</button>
+          <button className="btn" onClick={exportPDF}>Rapport PDF</button>
+        </div>
+      )}
+
+      {board && (
+        <div className="card">
+          <h3>Classement (bonnes réponses aux quiz)</h3>
+          {board.length === 0 ? (
+            <p className="muted">Aucune bonne réponse pour l'instant.</p>
+          ) : (
+            board.map(([name, s], i) => (
+              <div key={name} className="row spread">
+                <span>{i + 1}. {name}</span>
+                <b>{s}</b>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      <div className="card">
+        <h3>Nouvelle activité</h3>
+        <div className="row gap">
+          {["poll", "quiz", "cloud"].map((k) => (
+            <button
+              key={k}
+              className={"btn" + (form.kind === k ? " primary" : "")}
+              onClick={() => setForm({ ...form, kind: k, multi: false, corrects: [] })}
+            >
+              {k === "poll" ? "Sondage" : k === "quiz" ? "Quiz" : "Nuage"}
+            </button>
+          ))}
+        </div>
+        {form.kind === "quiz" && (
+          <button
+            className={"btn slim" + (form.multi ? " good" : "")}
+            onClick={() => setForm({ ...form, multi: !form.multi, corrects: [] })}
+          >
+            {form.multi ? "Réponses multiples : ON" : "Réponses multiples : OFF"}
+          </button>
+        )}
+        <input
+          className="input"
+          placeholder="Votre question..."
+          value={form.question}
+          onChange={(e) => setForm({ ...form, question: e.target.value })}
+        />
+        {form.kind !== "cloud" &&
+          form.options.map((opt, i) => (
+            <div key={i} className="row gap">
+              {form.kind === "quiz" && (
+                <button
+                  className={
+                    "btn slim" +
+                    ((form.multi ? form.corrects.includes(i) : form.correct === i) ? " good" : "")
+                  }
+                  onClick={() => {
+                    if (form.multi) {
+                      setForm({
+                        ...form,
+                        corrects: form.corrects.includes(i)
+                          ? form.corrects.filter((x) => x !== i)
+                          : [...form.corrects, i],
+                      });
+                    } else {
+                      setForm({ ...form, correct: i });
+                    }
+                  }}
+                >
+                  OK
+                </button>
+              )}
+              <input
+                className="input"
+                placeholder={"Option " + (i + 1)}
+                value={opt}
+                onChange={(e) =>
+                  setForm({ ...form, options: form.options.map((o, j) => (j === i ? e.target.value : o)) })
+                }
+              />
+            </div>
+          ))}
+        {form.kind !== "cloud" && form.options.length < 6 && (
+          <button className="btn slim" onClick={() => setForm({ ...form, options: [...form.options, ""] })}>
+            + Option
+          </button>
+        )}
+        {form.kind === "quiz" && (
+          <input
+            className="input narrow"
+            type="number"
+            min="5"
+            max="300"
+            value={form.duration}
+            onChange={(e) => setForm({ ...form, duration: e.target.value })}
+          />
+        )}
+        <button className="btn full" onClick={() => createActivity(false)}>Ajouter à la séance</button>
+        <button className="btn primary full" onClick={() => createActivity(true)}>Créer et projeter</button>
+      </div>
+    </div>
+  );
+}
