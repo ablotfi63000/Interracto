@@ -52,7 +52,7 @@ export default function Home() {
   return (
     <div className="wrap center">
       <div className="card narrow">
-        <h1>Interacto</h1>
+        <h1>Interacto <span className="byline">By Dr A. BELHAKEM</span></h1>
         <p className="muted">Sondages, quiz et nuages de mots en direct. Gratuit, sans compte.</p>
 
         <button className="btn primary full" onClick={createSession} disabled={busy}>
