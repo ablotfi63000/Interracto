@@ -30,6 +30,8 @@ export default function Host({ code }) {
     duration: 30,
   });
 
+  const [importTxt, setImportTxt] = useState("");
+
   const joinUrl = baseUrl() + "#/j/" + code;
 
   async function showActivity(activityId) {
@@ -280,7 +282,63 @@ export default function Host({ code }) {
     setActs((prev) => prev.map((x) => (x.id === a.id ? { ...x, ...patch } : x)));
     if (current?.id === a.id) setCurrent((c) => ({ ...c, ...patch }));
   }
-    async function createActivity(project) {
+    async function importBulk() {
+    const lines = (importTxt || "").split("\n").map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) { setMsg("Aucune ligne a importer."); return; }
+    let ok = 0;
+    let ko = 0;
+    for (const line of lines) {
+      try {
+        const f = line.split(";").map((s) => s.trim());
+        let type = (f[0] || "").toLowerCase();
+        const multi = type === "quizm";
+        if (type === "vf") type = "quiz";
+        if (type === "quizm") type = "quiz";
+        if (!["poll", "quiz", "cloud", "rank"].includes(type)) { ko++; continue; }
+        const question = (f[1] || "").trim();
+        if (!question) { ko++; continue; }
+        let img = null;
+        let exp = null;
+        const rest = [];
+        for (const part of f.slice(2)) {
+          if (/^img=.+/i.test(part)) img = part.slice(4);
+          else if (/^exp=.+/i.test(part)) exp = part.slice(4);
+          else rest.push(part);
+        }
+        const isCloud = type === "cloud";
+        if (!isCloud && rest.length < 2) { ko++; continue; }
+        const { data: act } = await supabase.from("activities").insert({
+          presentation_id: presId,
+          kind: type,
+          question,
+          category: null,
+          multi: type === "quiz" && multi,
+          duration_sec: type === "quiz" ? 30 : null,
+          position: acts.length + ok,
+          status: "closed",
+          image_url: img,
+          explanation: exp || null,
+        }).select().single();
+        if (!isCloud) {
+          const { data: opts } = await supabase.from("options").insert(
+            rest.map((label, i) => ({ activity_id: act.id, label: label.replace(/^\*/, ""), position: i, is_correct: type === "quiz" && label.startsWith("*") }))
+          ).select();
+          if (type === "quiz" && !multi) {
+            const ci = rest.findIndex((l) => l.startsWith("*"));
+            if (ci >= 0 && opts && opts[ci]) {
+              await supabase.from("activities").update({ correct_id: opts[ci].id }).eq("id", act.id);
+            }
+          }
+        }
+        ok++;
+      } catch (e) { ko++; }
+    }
+    setImportTxt("");
+    await loadSession();
+    setMsg(ok + " question(s) importee(s)" + (ko ? ", " + ko + " ignoree(s) (format)." : "."));
+  }
+
+  async function createActivity(project) {
     const labels = form.options.map((o) => o.trim()).filter(Boolean);
     if (!form.question.trim()) return setMsg("Question vide.");
     if (form.kind !== "cloud" && labels.length < 2) return setMsg("Au moins 2 options.");
@@ -635,6 +693,19 @@ export default function Host({ code }) {
           )}
         </div>
       )}
+
+      <div className="card">
+        <h3>Import en masse</h3>
+        <p className="muted small">Une question par ligne : type;question;reponse A;*bonne reponse;C. Types : poll, quiz (asterisque = bonne reponse), quizm (plusieurs bonnes reponses), vf, cloud, rank. Optionnel en fin de ligne : img=URL;exp=explication.</p>
+        <textarea
+          className="input"
+          rows="4"
+          placeholder="quiz;Capitale de la France ?;Lyon;*Paris;Marseille"
+          value={importTxt}
+          onChange={(e) => setImportTxt(e.target.value)}
+        />
+        <button className="btn primary" onClick={importBulk}>Importer</button>
+      </div>
 
       <div className="card">
         <h3>Nouvelle activité</h3>
