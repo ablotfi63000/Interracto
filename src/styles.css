@@ -80,3 +80,7 @@ h1, h2, h3 { margin: 0; }
 .card.screen.fs { position: fixed; inset: 0; z-index: 999; border-radius: 0; overflow: auto; }
 
 .byline { font-size: 12px; color: #64748b; font-weight: normal; margin-left: 8px; letter-spacing: 0.5px; }
+
+.qimg { max-width: 100%; max-height: 40vh; border-radius: 12px; margin: 6px auto; display: block; }
+.card.screen .qimg { max-height: 55vh; }
+.imgthumb { max-height: 64px; border-radius: 8px; }

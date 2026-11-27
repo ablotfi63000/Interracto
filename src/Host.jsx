@@ -192,6 +192,7 @@ export default function Host({ code }) {
       vf: false,
       kind: a.kind,
       question: a.question,
+      image_url: a.image_url,
       options: a.kind === "cloud" ? ["", ""] : os.length ? os.map((o) => o.label) : ["", ""],
       correct: a.multi ? 0 : Math.max(0, os.findIndex((o) => o.id === a.correct_id)),
       corrects: os.map((o, i) => (o.is_correct ? i : -1)).filter((i) => i >= 0),
@@ -209,6 +210,7 @@ export default function Host({ code }) {
         presentation_id: presId,
         kind: a.kind,
         question: a.question,
+      image_url: a.image_url,
         multi: a.multi,
         duration_sec: a.duration_sec,
         category: a.category ?? null,
@@ -262,6 +264,7 @@ export default function Host({ code }) {
         kind: form.kind,
         question: form.question.trim(),
         category: form.category?.trim() || null,
+        image_url: form.image_url || null,
         multi: isMulti,
         duration_sec: form.kind === "quiz" ? Number(form.duration) : null,
         position: acts.length,
@@ -285,13 +288,25 @@ export default function Host({ code }) {
         await supabase.from("activities").update({ correct_id: opts[form.correct].id }).eq("id", act.id);
       }
     }
-    setForm({ ...form, question: "", options: ["", ""], corrects: [], vf: false });
+    setForm({ ...form, question: "", options: ["", ""], corrects: [], vf: false, image_url: null });
     await loadSession();
     if (project) {
       await focusActivity(act);
     } else {
       setMsg("Question " + acts.length + " ajoutée à la séance.");
     }
+  }
+
+  async function upImg(e) {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    if (f.size > 4 * 1024 * 1024) { setMsg("Image trop lourde (max 4 Mo)."); return; }
+    const name = code + "_" + Date.now() + "_" + f.name.replace(/\s+/g, "_");
+    const { error } = await supabase.storage.from("images").upload(name, f, { upsert: true });
+    if (error) { setMsg("Image : " + error.message); return; }
+    const url = supabase.storage.from("images").getPublicUrl(name).data.publicUrl;
+    setForm((prev) => ({ ...prev, image_url: url }));
+    setMsg("");
   }
 
   async function exportCSV() {
@@ -447,6 +462,9 @@ export default function Host({ code }) {
                 {current.status === "open" ? "Ouvert" : "Verrouillé"}
               </span>
             </div>
+            {current.image_url && (
+              <img src={current.image_url} className="qimg" alt="" />
+            )}
             {online > 0 && (
               <div>
                 <p className="muted small">Réponses : {totalVotes} / {online} connecté(s)</p>
@@ -619,6 +637,13 @@ export default function Host({ code }) {
           value={form.category ?? ""}
           onChange={(e) => setForm({ ...form, category: e.target.value })}
         />
+        <div className="row gap">
+          <label className="btn slim">+ Image
+            <input type="file" accept="image/*" style={{ display: "none" }} onChange={upImg} />
+          </label>
+          {form.image_url && <img src={form.image_url} className="imgthumb" alt="" />}
+          {form.image_url && <button className="btn slim" onClick={() => setForm({ ...form, image_url: null })}>Retirer image</button>}
+        </div>
         {form.kind !== "cloud" &&
           form.options.map((opt, i) => (
             <div key={i} className="row gap">
