@@ -150,6 +150,59 @@ export default function Host({ code }) {
     await showActivity(a.id);
   }
 
+  async function reuse(a) {
+    const { data: opts } = await supabase.from("options").select("*").eq("activity_id", a.id).order("position");
+    const os = opts ?? [];
+    setForm({
+      vf: false,
+      kind: a.kind,
+      question: a.question,
+      options: a.kind === "cloud" ? ["", ""] : os.length ? os.map((o) => o.label) : ["", ""],
+      correct: a.multi ? 0 : Math.max(0, os.findIndex((o) => o.id === a.correct_id)),
+      corrects: os.map((o, i) => (o.is_correct ? i : -1)).filter((i) => i >= 0),
+      multi: a.multi,
+      duration: a.duration_sec ?? 30,
+      category: a.category ?? "",
+    });
+    setMsg("Question reprise dans le formulaire : ajustez puis validez.");
+  }
+
+  async function reprogram(a) {
+    const { data: act } = await supabase
+      .from("activities")
+      .insert({
+        presentation_id: presId,
+        kind: a.kind,
+        question: a.question,
+        multi: a.multi,
+        duration_sec: a.duration_sec,
+        category: a.category ?? null,
+        position: acts.length,
+        status: "closed",
+      })
+      .select()
+      .single();
+    const { data: opts } = await supabase
+      .from("options")
+      .select("*")
+      .eq("activity_id", a.id)
+      .order("position");
+    const os = opts ?? [];
+    if (os.length) {
+      const { data: newOpts } = await supabase
+        .from("options")
+        .insert(os.map((o) => ({ activity_id: act.id, label: o.label, position: o.position, is_correct: a.multi ? o.is_correct : false })))
+        .select();
+      if (!a.multi && a.correct_id) {
+        const src = os.find((x) => x.id === a.correct_id)?.label ?? "";
+        const good = newOpts?.find((o) => o.label === src);
+        if (good) await supabase.from("activities").update({ correct_id: good.id }).eq("id", act.id);
+      }
+    }
+    await loadSession();
+    setMsg("Question reprogrammee en fin de seance.");
+  }
+
   async function toggleOpen(a) {
     const status = a.status === "open" ? "closed" : "open";
     const patch = { status };
@@ -173,6 +226,7 @@ export default function Host({ code }) {
         presentation_id: presId,
         kind: form.kind,
         question: form.question.trim(),
+        category: form.category?.trim() || null,
         multi: isMulti,
         duration_sec: form.kind === "quiz" ? Number(form.duration) : null,
         position: acts.length,
@@ -196,7 +250,7 @@ export default function Host({ code }) {
         await supabase.from("activities").update({ correct_id: opts[form.correct].id }).eq("id", act.id);
       }
     }
-    setForm({ ...form, question: "", options: ["", ""], corrects: [] });
+    setForm({ ...form, question: "", options: ["", ""], corrects: [], vf: false });
     await loadSession();
     if (project) {
       await focusActivity(act);
@@ -356,6 +410,17 @@ export default function Host({ code }) {
                 {current.status === "open" ? "Ouvert" : "Verrouillé"}
               </span>
             </div>
+            {online > 0 && (
+              <div>
+                <p className="muted small">Réponses : {totalVotes} / {online} connecté(s)</p>
+                <div className="bar-track">
+                  <div
+                    className="bar-fill"
+                    style={{ width: Math.min(100, Math.round((totalVotes / online) * 100)) + "%" }}
+                  ></div>
+                </div>
+              </div>
+            )}
 
             {remaining !== null && current.status === "open" && (
               <p className={"timer" + (remaining <= 5 ? " hot" : "")}>{remaining}s</p>
@@ -401,13 +466,17 @@ export default function Host({ code }) {
 
       <div className="row gap wrap">
         {acts.map((a, i) => (
-          <button
-            key={a.id}
-            className={"btn" + (current?.id === a.id ? " primary" : "")}
-            onClick={() => focusActivity(a)}
-          >
-            {i + 1}. {a.kind === "poll" ? "Sondage" : a.kind === "quiz" ? "Quiz" : "Nuage"} - {a.question.slice(0, 25)}
-          </button>
+          <span key={a.id} className="row gap">
+            <button
+              className={"btn" + (current?.id === a.id ? " primary" : "")}
+              onClick={() => focusActivity(a)}
+            >
+              {i + 1}. {a.kind === "poll" ? "Sondage" : a.kind === "quiz" ? "Quiz" : "Nuage"} - {a.question.slice(0, 25)}
+            </button>
+            <button className="btn slim" onClick={() => reuse(a)}>
+              Réutiliser
+            </button>
+          </span>
         ))}
       </div>
 
@@ -422,6 +491,19 @@ export default function Host({ code }) {
           <button className="btn" onClick={showBoard}>Classement</button>
           <button className="btn" onClick={exportCSV}>Export CSV</button>
           <button className="btn" onClick={exportPDF}>Rapport PDF</button>
+          {current.kind === "quiz" && revealed && totalVotes > 0 && (() => {
+            const opts = current.options ?? [];
+            const nbGood = current.multi ? opts.filter((o) => o.is_correct).length : 1;
+            const okCount = current.multi
+              ? opts.reduce((s, o) => s + (o.is_correct ? (counts[o.id] ?? 0) : 0), 0)
+              : counts[current.correct_id] ?? 0;
+            const pct = Math.round((okCount / (totalVotes * nbGood || 1)) * 100);
+            return pct < 50 ? (
+              <button className="btn" onClick={() => reprogram(current)}>
+                Reviser cette question ({pct}% de reussite)
+              </button>
+            ) : null;
+          })()}
         </div>
       )}
 
@@ -448,16 +530,22 @@ export default function Host({ code }) {
             <button
               key={k}
               className={"btn" + (form.kind === k ? " primary" : "")}
-              onClick={() => setForm({ ...form, kind: k, multi: false, corrects: [] })}
+              onClick={() => setForm({ ...form, kind: k, multi: false, corrects: [], vf: false })}
             >
               {k === "poll" ? "Sondage" : k === "quiz" ? "Quiz" : "Nuage"}
             </button>
           ))}
         </div>
+        <button
+          className={"btn slim" + (form.vf ? " good" : "")}
+          onClick={() => setForm({ ...form, kind: "quiz", multi: false, corrects: [], options: ["Vrai", "Faux"], correct: 0, question: "", vf: true })}
+        >
+          Vrai/Faux éclair
+        </button>
         {form.kind === "quiz" && (
           <button
             className={"btn slim" + (form.multi ? " good" : "")}
-            onClick={() => setForm({ ...form, multi: !form.multi, corrects: [] })}
+            onClick={() => setForm({ ...form, multi: !form.multi, corrects: [], vf: false })}
           >
             {form.multi ? "Réponses multiples : ON" : "Réponses multiples : OFF"}
           </button>
@@ -467,6 +555,12 @@ export default function Host({ code }) {
           placeholder="Votre question..."
           value={form.question}
           onChange={(e) => setForm({ ...form, question: e.target.value })}
+        />
+        <input
+          className="input"
+          placeholder="Catégorie (facultatif)"
+          value={form.category ?? ""}
+          onChange={(e) => setForm({ ...form, category: e.target.value })}
         />
         {form.kind !== "cloud" &&
           form.options.map((opt, i) => (

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./lib/supabase.js";
 
 const REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F62E}", "\u{1F525}"];
@@ -10,6 +10,8 @@ export default function Participant({ code }) {
   const [nickname, setNickname] = useState(() => localStorage.getItem("interacto_name") ?? "");
   const [joined, setJoined] = useState(false);
   const [answered, setAnswered] = useState(false);
+  const [words, setWords] = useState([]);
+  const actIdRef = useRef(null);
   const [word, setWord] = useState("");
   const [picked, setPicked] = useState([]);
   const [now, setNow] = useState(Date.now());
@@ -45,8 +47,10 @@ export default function Participant({ code }) {
       }
       setPres(p);
       setAnswered(false);
+      setWords([]);
       setPicked([]);
       setWord("");
+      actIdRef.current = p.current_activity_id ?? null;
       if (!p.current_activity_id) {
         setActivity(null);
         return;
@@ -64,6 +68,13 @@ export default function Participant({ code }) {
       if (!alive) return;
       setActivity(act);
       setOptions(opts ?? []);
+      if (act?.kind === "cloud") {
+        const { data: rs } = await supabase
+          .from("responses")
+          .select("word")
+          .eq("activity_id", act.id);
+        setWords((rs ?? []).map((r) => (r.word || "").toLowerCase()).filter(Boolean));
+      }
     }
 
     load();
@@ -76,7 +87,18 @@ export default function Participant({ code }) {
           if (payload.new.code === code) load();
         }
       )
-      .subscribe();
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "responses" },
+        (payload) => {
+          if (actIdRef.current && payload.new.activity_id === actIdRef.current && payload.new.word) {
+            setWords((w) => [...w, payload.new.word]);
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") load();
+      });
     return () => {
       alive = false;
       supabase.removeChannel(channel);
@@ -186,16 +208,32 @@ export default function Participant({ code }) {
       </p>
       {error && <p className="error">{error}</p>}
 
-      {!activity && <p className="muted big">En attente du présentateur...</p>}
+      {!activity && <p className="muted big waiting">En attente du présentateur...</p>}
 
       {activity && (
         <>
+          {activity.category && (
+            <p className="muted small">Catégorie : {activity.category}</p>
+          )}
           <h2>{activity.question}{activity.multi ? " (plusieurs réponses)" : ""}</h2>
           {activity.status === "closed" ? (
             <p className="muted big">Réponses verrouillées</p>
           ) : activity.kind === "cloud" ? (
             answered ? (
-              <p className="ok-msg">Mot envoyé !</p>
+              <>
+                <p className="ok-msg">Mot envoyé !</p>
+                <div className="cloud mini">
+                  {(() => {
+                    const c = {};
+                    words.forEach((w) => {
+                      c[w] = (c[w] ?? 0) + 1;
+                    });
+                    return Object.entries(c).map(([w, n]) => (
+                      <span key={w} style={{ fontSize: 0.8 + n * 0.2 + "rem" }}>{w} </span>
+                    ));
+                  })()}
+                </div>
+              </>
             ) : (
               <div className="row gap">
                 <input
