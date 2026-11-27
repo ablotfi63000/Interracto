@@ -104,7 +104,7 @@ export default function Participant({ code }) {
   const vote = async (option) => {
     if (answered || locked) return;
     const { error: err } = await supabase.from("responses").upsert(
-      { activity_id: activity.id, option_id: option.id, participant_key: participantKey },
+            { activity_id: activity.id, option_id: option.id, participant_key: participantKey, nickname: nickname || null },
       { onConflict: "activity_id,participant_key" }
     );
     if (err) {
@@ -122,7 +122,7 @@ export default function Participant({ code }) {
   const sendMulti = async () => {
     if (!picked.length || answered || locked) return;
     const { error: err } = await supabase.from("responses").upsert(
-      { activity_id: activity.id, option_ids: picked, participant_key: participantKey },
+            { activity_id: activity.id, option_ids: picked, participant_key: participantKey, nickname: nickname || null },
       { onConflict: "activity_id,participant_key" }
     );
     if (err) {
@@ -136,7 +136,7 @@ export default function Participant({ code }) {
     const w = word.trim().toLowerCase();
     if (!w || answered || locked) return;
     const { error: err } = await supabase.from("responses").upsert(
-      { activity_id: activity.id, word: w, participant_key: participantKey },
+            { activity_id: activity.id, word: w, participant_key: participantKey, nickname: nickname || null },
       { onConflict: "activity_id,participant_key" }
     );
     if (err) {
