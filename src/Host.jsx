@@ -1,5 +1,5 @@
 import Qr from "./Qr.jsx";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase, baseUrl } from "./lib/supabase.js";
 
 const norm = (w) =>
@@ -12,6 +12,9 @@ export default function Host({ code }) {
   const [counts, setCounts] = useState({});
   const [reactions, setReactions] = useState({});
   const [revealed, setRevealed] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const playTimer = useRef(null);
+  const playGap = useRef(null);
   const [now, setNow] = useState(Date.now());
   const [online, setOnline] = useState(0);
   const [msg, setMsg] = useState("");
@@ -180,6 +183,33 @@ export default function Host({ code }) {
     };
   }, [presId, code, current?.id]);
 
+  function stopRun() {
+    setPlaying(false);
+    if (playTimer.current) { clearTimeout(playTimer.current); playTimer.current = null; }
+    if (playGap.current) { clearTimeout(playGap.current); playGap.current = null; }
+  }
+
+  async function startRun() {
+    if (!acts.length) { setMsg("Aucune question dans la seance."); return; }
+    stopRun();
+    setPlaying(true);
+    let i = 0;
+    const step = async () => {
+      if (i >= acts.length) { stopRun(); return; }
+      const a = acts[i];
+      await focusActivity(a);
+      supabase.from("activities").update({ status: "open", revealed: false, opened_at: new Date().toISOString() }).eq("id", a.id);
+      const dur = Math.max(10, a.duration_sec || 30);
+      playTimer.current = setTimeout(() => {
+        setRevealed(true);
+        supabase.from("activities").update({ status: "closed", revealed: true }).eq("id", a.id);
+        i++;
+        playGap.current = setTimeout(step, 7000);
+      }, dur * 1000);
+    };
+    step();
+  }
+
   async function focusActivity(a) {
     await supabase.from("presentations").update({ current_activity_id: a.id }).eq("id", presId);
     await showActivity(a.id);
@@ -193,6 +223,7 @@ export default function Host({ code }) {
       kind: a.kind,
       question: a.question,
       image_url: a.image_url,
+      explanation: a.explanation,
       options: a.kind === "cloud" ? ["", ""] : os.length ? os.map((o) => o.label) : ["", ""],
       correct: a.multi ? 0 : Math.max(0, os.findIndex((o) => o.id === a.correct_id)),
       corrects: os.map((o, i) => (o.is_correct ? i : -1)).filter((i) => i >= 0),
@@ -211,6 +242,7 @@ export default function Host({ code }) {
         kind: a.kind,
         question: a.question,
       image_url: a.image_url,
+      explanation: a.explanation,
         multi: a.multi,
         duration_sec: a.duration_sec,
         category: a.category ?? null,
@@ -265,6 +297,7 @@ export default function Host({ code }) {
         question: form.question.trim(),
         category: form.category?.trim() || null,
         image_url: form.image_url || null,
+        explanation: form.explanation?.trim() || null,
         multi: isMulti,
         duration_sec: form.kind === "quiz" ? Number(form.duration) : null,
         position: acts.length,
@@ -288,7 +321,7 @@ export default function Host({ code }) {
         await supabase.from("activities").update({ correct_id: opts[form.correct].id }).eq("id", act.id);
       }
     }
-    setForm({ ...form, question: "", options: ["", ""], corrects: [], vf: false, image_url: null });
+    setForm({ ...form, question: "", options: ["", ""], corrects: [], vf: false, image_url: null, explanation: "" });
     await loadSession();
     if (project) {
       await focusActivity(act);
@@ -462,6 +495,9 @@ export default function Host({ code }) {
                 {current.status === "open" ? "Ouvert" : "Verrouillé"}
               </span>
             </div>
+            {revealed && current.explanation && (
+              <p className="expl">{current.explanation}</p>
+            )}
             {current.image_url && (
               <img src={current.image_url} className="qimg" alt="" />
             )}
@@ -560,6 +596,11 @@ export default function Host({ code }) {
           >
             {revealed ? "Masquer" : "Afficher"}
           </button>
+          {!playing ? (
+            <button className="btn primary" onClick={startRun}>Defiler</button>
+          ) : (
+            <button className="btn primary" onClick={stopRun}>Stop defilement</button>
+           )}
           <button className="btn" onClick={showBoard}>Classement</button>
           <button className="btn" onClick={exportCSV}>Export CSV</button>
           <button className="btn" onClick={exportPDF}>Rapport PDF</button>
@@ -644,6 +685,13 @@ export default function Host({ code }) {
           {form.image_url && <img src={form.image_url} className="imgthumb" alt="" />}
           {form.image_url && <button className="btn slim" onClick={() => setForm({ ...form, image_url: null })}>Retirer image</button>}
         </div>
+        <textarea
+          className="input"
+          rows="2"
+          placeholder="Explication (affichee avec le corrige)"
+          value={form.explanation ?? ""}
+          onChange={(e) => setForm({ ...form, explanation: e.target.value })}
+        />
         {form.kind !== "cloud" &&
           form.options.map((opt, i) => (
             <div key={i} className="row gap">

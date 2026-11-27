@@ -84,3 +84,6 @@ h1, h2, h3 { margin: 0; }
 .qimg { max-width: 100%; max-height: 40vh; border-radius: 12px; margin: 6px auto; display: block; }
 .card.screen .qimg { max-height: 55vh; }
 .imgthumb { max-height: 64px; border-radius: 8px; }
+
+.expl { background: #1e293b; border-left: 3px solid #818cf8; padding: 10px 12px; border-radius: 8px; color: #cbd5e1; font-size: 0.95rem; text-align: left; }
+textarea.input { resize: vertical; font-family: inherit; }

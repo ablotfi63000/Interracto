@@ -232,6 +232,9 @@ export default function Participant({ code }) {
           )}
           <h2>{activity.question}{activity.multi ? " (plusieurs réponses)" : ""}</h2>
           {activity.image_url && <img src={activity.image_url} className="qimg" alt="" />}
+          {activity.explanation && (activity.status === "closed" || answered) && (
+            <p className="expl">{activity.explanation}</p>
+          )}
           {activity.status === "closed" ? (
             <p className="muted big">Réponses verrouillées</p>
           ) : activity.kind === "cloud" ? (
