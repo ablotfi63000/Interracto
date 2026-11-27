@@ -11,7 +11,8 @@ body {
 .wrap.mobile { max-width: 480px; padding-bottom: 80px; }
 .card { background: #0f172a; border: 1px solid #1e293b; border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
 .card.narrow { max-width: 360px; width: 100%; margin: 0 auto; }
-.card.screen { min-height: 40vh; justify-content: center; }
+.card.screen { min-height: 40vh; justify-content: center; position: relative; }
+.credit { position: absolute; top: 8px; right: 14px; font-size: 11px; color: #64748b; }
 h1, h2, h3 { margin: 0; }
 .muted { color: #94a3b8; }
 .small { font-size: 13px; }
