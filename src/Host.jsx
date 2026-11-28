@@ -19,6 +19,7 @@ export default function Host({ code }) {
   const [online, setOnline] = useState(0);
   const [msg, setMsg] = useState("");
   const [board, setBoard] = useState(null);
+  const [stats, setStats] = useState(null);
   const [rankData, setRankData] = useState(null);
   const [form, setForm] = useState({
     kind: "poll",
@@ -471,6 +472,47 @@ export default function Host({ code }) {
     w.document.close();
   }
 
+  async function showStats() {
+    if (!acts.length) { setMsg("Aucune question dans la seance."); return; }
+    const ids = acts.map((a) => a.id);
+    const quizzes = acts.filter((a) => a.kind === "quiz");
+    const quizIds = quizzes.map((a) => a.id);
+    const { data: allOpts } = await supabase.from("options").select("*").in("activity_id", quizIds);
+    const { data: resps } = await supabase.from("responses").select("*").in("activity_id", ids);
+    const actById = new Map(acts.map((a) => [a.id, a]));
+    const map = new Map();
+    const seen = new Set();
+    (resps ?? []).forEach((r) => {
+      const a = actById.get(r.activity_id);
+      if (!a) return;
+      const key = r.participant_key || r.id;
+      const dedup = key + "|" + r.activity_id;
+      if (seen.has(dedup)) return;
+      seen.add(dedup);
+      const name = r.nickname || "Anonyme";
+      const p = map.get(key) || { name, answered: 0, correct: 0 };
+      p.answered++;
+      if (a.kind === "quiz") {
+        let ok = false;
+        if (a.multi) {
+          const correctSet = new Set((allOpts ?? []).filter((o) => o.activity_id === a.id && o.is_correct).map((o) => o.id));
+          ok = r.option_ids?.length === correctSet.size && r.option_ids.every((x) => correctSet.has(x));
+        } else {
+          ok = r.option_id === a.correct_id;
+        }
+        if (ok) p.correct++;
+      }
+      map.set(key, p);
+    });
+    const tot = quizzes.length;
+    setStats(
+      [...map.values()]
+        .sort((x, y) => y.correct - x.correct || y.answered - x.answered)
+        .slice(0, 20)
+        .map((p) => [p.name, p.answered, p.correct, tot])
+    );
+  }
+
   async function showBoard() {
     const quizzes = acts.filter((a) => a.kind === "quiz");
     if (!quizzes.length) return setMsg("Aucun quiz dans la séance.");
@@ -660,6 +702,7 @@ export default function Host({ code }) {
             <button className="btn primary" onClick={stopRun}>Stop defilement</button>
            )}
           <button className="btn" onClick={showBoard}>Classement</button>
+          <button className="btn" onClick={showStats}>Stats eleves</button>
           <button className="btn" onClick={exportCSV}>Export CSV</button>
           <button className="btn" onClick={exportPDF}>Rapport PDF</button>
           {current.kind === "quiz" && revealed && totalVotes > 0 && (() => {
@@ -688,6 +731,22 @@ export default function Host({ code }) {
               <div key={name} className="row spread">
                 <span>{i + 1}. {name}</span>
                 <b>{s}</b>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {stats && (
+        <div className="card">
+          <h3>Stats eleves</h3>
+          {stats.length === 0 ? (
+            <p className="muted">Aucune reponse pour l instant.</p>
+          ) : (
+            stats.map(([name, answered, correct, tot], i) => (
+              <div key={i} className="row spread">
+                <span>{i + 1}. {name}</span>
+                <b>{answered}/{acts.length} questions - {correct}/{tot} quiz OK</b>
               </div>
             ))
           )}
